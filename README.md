@@ -2,7 +2,7 @@
 Deploy Automatically Secure Active Directory Trust Relationships
 ---------
 
-If you are interested in setting up Selective Authentication in your environment, please check [here](https://publish.obsidian.md/yooga-sec/PERSO/PUBLISH/Article+perso/(Don't)+Trust+me+PART+II%2C+a+little+study+on+securing+Active+Directory+Trusts) I wrote first 😉 it summarizes prerequisites and walk through every steps of deploying an AD trust with Selective Authentication
+If you are interested in setting up Selective Authentication in your environment, please check [this blog post](https://publish.obsidian.md/yooga-sec/PERSO/PUBLISH/Article+perso/(Don't)+Trust+me+PART+II%2C+a+little+study+on+securing+Active+Directory+Trusts) I wrote first 😉 it summarizes prerequisites and walk through every steps of deploying an AD trust with Selective Authentication
 
 This script offers two main functions that will help you :
 
