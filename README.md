@@ -1,7 +1,9 @@
 # Secure-ADTrust
-Deploy Automatically Secure Active Directory Trust RelationShips
-
+Deploy Automatically Secure Active Directory Trust Relationships
 ---------
+
+If you are interested in setting up Selective Authentication in your environment, please check [this blog post]([https://blog.y00ga.lol/PERSO/PUBLISH/Article+perso/(Don't)+Trust+me%2C+a+little+study+on+attacking+Active+Directory+Trusts](https://blog.y00ga.lol/PERSO/PUBLISH/Article+perso/Welcome+!)) I wrote first 😉 it summarizes prerequisites and walk through every steps of deploying an AD trust with Selective Authentication
+
 This script offers two main functions that will help you :
 
 - Deploy **Outbound External Trusts** with Selective Authentication
@@ -48,6 +50,8 @@ Grant-AllowedToAuthenticate -ComputerName "SRV01","SRV02" -Principal "TRUSTEDDOM
 
 https://github.com/user-attachments/assets/861ffe9c-d2ca-4755-b6d4-42555122c4fe
 
+-------------
+Greetings :
 
 
 
