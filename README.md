@@ -7,7 +7,7 @@ If you are interested in setting up Selective Authentication in your environment
 This script offers two main functions that will help you :
 
 - Deploy **Outbound External Trusts** with Selective Authentication
-- Configure the **Allowed to authenticate** permissions to the right trusted objects for every computer objects in a single OU in the trusting domain
+- Configure the **Allowed to authenticate** permissions to the right trusted objects in the trusting domain
 
 ## Set-ADTrust
 
