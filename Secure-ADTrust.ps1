@@ -1,172 +1,238 @@
-function Set-ADTrust {
-<#
-.SYNOPSIS    
-    Create a unidirectional outbound trust relationship between the current AD forest (trusting) and another (trusted)
-    
-.DESCRIPTION  
-    Set up an Active Directory outbound trust to a remote forest. It will:
-
-    - Add a conditional forwarder on this DC to the remote DC
-    - Add a conditional forwarder on the remote DC to this DC
-    - Create an outbound trust
-    - Set trust to use Selective Authentication
-
-.PARAMETER FQDN  
-    FQDN of the remote DC
-
-.PARAMETER IP  
-    IP address of the remote DC
-       
-.PARAMETER Admin  
-    Admin account of the remote DC in samAccountName form (i.e. DOMAIN\Administrator)
-
-.PARAMETER TrustedDomain
-    FQDN of the trusted domain (remote forest root domain)
-#>
-
+function Set-ADtrust {
+    <#
+    .SYNOPSIS
+        Automates AD Trust creation: TrustedHosts, DNS Forwarders, separated Trust Creation (BiDirectional/Inbound/Outbound), Selective Auth, and verification.
+    #>
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory = $true)]
-        [string]$FQDN,
+        [Parameter(Mandatory=$true)][string]$SourceDC,
+        [Parameter(Mandatory=$true)][string]$SourceDomain,
+        [Parameter(Mandatory=$true)][PSCredential]$SourceCred,
+        
+        [Parameter(Mandatory=$true)][string]$TargetDC,
+        [Parameter(Mandatory=$true)][string]$TargetDomain,
+        [Parameter(Mandatory=$true)][PSCredential]$TargetCred,
 
-        [Parameter(Mandatory = $true)]
-        [string]$IP,
+        [Parameter(Mandatory=$false)]
+        [ValidateSet("BiDirectional", "Inbound", "Outbound")]
+        [string]$Direction = "BiDirectional",
 
-        [Parameter(Mandatory = $true)]
-        [string]$Admin,
-                
-        [Parameter(Mandatory = $true)]
-        [string]$TrustedDomain
+        [Parameter(Mandatory=$false)][switch]$SelectiveAuthentication
     )
 
-    $DNSName = ($FQDN -split '\.')[1..($FQDN.Length - 1)] -join '.'
+    Begin {
+        Write-Host "=====================================================" -ForegroundColor Cyan
+        Write-Host "[*] Starting Automated AD Trust Setup ($Direction)" -ForegroundColor Cyan
+        Write-Host "=====================================================" -ForegroundColor Cyan
 
-    Write-Host "[+] Adding conditional forwarder on this DC to the remote forest..." -ForegroundColor Cyan
+        function Get-Plaintext {
+            param([System.Security.SecureString]$SecureString)
+            $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($SecureString)
+            $plain = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
+            [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+            return $plain
+        }
 
-    $existingForwarder = Get-DnsServerZone -Name $DNSName -ErrorAction SilentlyContinue
-    if (!$existingForwarder) {
-        try {
-            Add-DnsServerConditionalForwarderZone -Name $DNSName -MasterServers $IP
-            Write-Host "$DNSName has been added to conditional forwarders." -ForegroundColor Green
-        } catch {
-            Write-Warning "DNS conditional forwarder failed to add: $($_.Exception.Message)"
+        # Resolve IPv4 
+        $TargetIP = ([System.Net.Dns]::GetHostAddresses($TargetDC) | Where-Object { $_.AddressFamily -eq 'InterNetwork' })[0].IPAddressToString
+        $SourceIP = ([System.Net.Dns]::GetHostAddresses($SourceDC) | Where-Object { $_.AddressFamily -eq 'InterNetwork' })[0].IPAddressToString
+        
+        if (!$TargetIP -or !$SourceIP) {
+            Write-Error "Failed to resolve IPv4 for Source or Target DC."
             return
         }
-    } else {
-        Write-Host "Conditional forwarder for $DNSName already exists. Skipping..." -ForegroundColor Yellow
+
+        Write-Host "    [*] Resolved Source IP: $SourceIP" -ForegroundColor Gray
+        Write-Host "    [*] Resolved Target IP: $TargetIP" -ForegroundColor Gray
+        
+        $srcPass = Get-Plaintext $SourceCred.Password
+        $tgtPass = Get-Plaintext $TargetCred.Password
     }
 
-    Write-Host "[+] Adding conditional forwarder on the remote DC to this forest..." -ForegroundColor Cyan
-
-    $RemoteCredential = Get-Credential -UserName $Admin -Message "Enter the password for $Admin"
-    $localIP = (Test-Connection -ComputerName (hostname) -Count 1 | Select -ExpandProperty IPV4Address).IPAddressToString
-    $localRootDomain = (Get-ADForest).RootDomain
-
-    try {
-        Invoke-Command -ComputerName $FQDN -Credential $RemoteCredential -ScriptBlock {
-            Add-DnsServerConditionalForwarderZone -Name $using:localRootDomain -MasterServers $using:localIP
-            Write-Host "Conditional forwarder to this domain has been successfully added on remote DC." -ForegroundColor Green
-        }
-    } catch {
-        Write-Warning "Failed to add conditional forwarder on remote DC: $($_.Exception.Message)"
-        return
-    }
-
-    Write-Host "[+] Creating outbound trust relationship..." -ForegroundColor Cyan
-
-    $remoteContext = New-Object -TypeName "System.DirectoryServices.ActiveDirectory.DirectoryContext" -ArgumentList @("Forest", $DNSName, $RemoteCredential.UserName, $RemoteCredential.GetNetworkCredential().Password)
-    $localForest = [System.DirectoryServices.ActiveDirectory.Forest]::getCurrentForest()
-
-    try {
-        $remoteForest = [System.DirectoryServices.ActiveDirectory.Forest]::getForest($remoteContext)
-        Write-Host "$($remoteForest.Name) exists." -ForegroundColor Green
-    } catch {
-        Write-Warning "Failed to retrieve remote forest info: $($_.Exception.Message)"
-        return
-    }
-
-    try {
-        $localForest.CreateTrustRelationship($remoteForest, "Outbound")
-        Write-Host "Outbound trust has been created with forest $($remoteForest.Name)." -ForegroundColor Green
-    } catch {
-        Write-Warning "Could not create trust: $($_.Exception.Message)"
-        return
-    }
-
-    # Get system UI language
-    $language = (Get-Culture).Name
-
-    # Determine localized value for "Yes", I ran into errors if the /SelectAUTH value was in the DC language, dunno why
-    switch ($language) {
-        'fr-FR' { $selectiveAuthValue = 'Oui' }
-        'en-US' { $selectiveAuthValue = 'Yes' }
-        'de-DE' { $selectiveAuthValue = 'Ja' }
-        'es-ES' { $selectiveAuthValue = 'Sí' }
-        default {
-            Write-Warning "Unsupported language '$language'. Defaulting to 'Yes'. Make sure to check manually if Selective Authentication has been correctly configured by the script"
-            $selectiveAuthValue = 'Yes'
-        }
-    }
-
-    # Execute the command with the correct localized parameter
-    Write-Host "[+] Setting trust to Selective Authentication..." -ForegroundColor Cyan
-    try {
-        netdom trust $env:USERDNSDOMAIN /Domain:$TrustedDomain /SelectiveAUTH:$selectiveAuthValue
-        Write-Host "Trust set to use Selective Authentication." -ForegroundColor Green
-    } catch {
-        Write-Warning "Failed to set Selective Authentication: $($_.Exception.Message)"
-    }
-}
-
-function Grant-AllowedToAuthenticate {
-<#
-.SYNOPSIS
-    Grants "Allowed to Authenticate" permission to a security principal on specific computer objects.
-
-.PARAMETER ComputerName
-    One or more computer names (sAMAccountName or DNS names) in the current domain.
-
-.PARAMETER Principal
-    The user or group from the trusted domain (e.g., "TRUSTEDDOM\User" or "TRUSTEDDOM\Domain Users") to be granted permission.
-
-.EXAMPLE
-    Grant-AllowedToAuthenticate -ComputerName "SRV01","SRV02" -Principal "TRUSTEDDOM\Domain Users"
-#>
-    [CmdletBinding()]
-    param (
-        [Parameter(Mandatory = $true)]
-        [string[]]$ComputerName,
-
-        [Parameter(Mandatory = $true)]
-        [string]$Principal
-    )
-
-    foreach ($name in $ComputerName) {
-        try {
-            $computer = Get-ADComputer -Identity $name -Properties DistinguishedName
-            $dn = $computer.DistinguishedName
-        } catch {
-            Write-Warning "Computer '$name' not found in AD: $($_.Exception.Message)"
-            continue
+    Process {
+        # ---------------------------------------------------------------------
+        # STEP 1: WinRM TrustedHosts Configuration
+        # ---------------------------------------------------------------------
+        Write-Host "`n[1] Configuring WinRM TrustedHosts..." -ForegroundColor Yellow
+        
+        $localTH = (Get-Item WSMan:\localhost\Client\TrustedHosts).Value
+        if ($localTH -notmatch $TargetIP -and $localTH -notmatch "\*") {
+            $newTH = if ([string]::IsNullOrWhiteSpace($localTH)) { "$TargetIP,$TargetDC" } else { "$localTH,$TargetIP,$TargetDC" }
+            Set-Item WSMan:\localhost\Client\TrustedHosts -Value $newTH -Force
+            Write-Host "    [+] Added Target ($TargetIP) to Local TrustedHosts." -ForegroundColor Green
+        } else {
+            Write-Host "    [-] Target already in Local TrustedHosts." -ForegroundColor Gray
         }
 
         try {
-            $acl = Get-Acl -Path "AD:$dn"
-            $identity = New-Object System.Security.Principal.NTAccount($Principal)
+            Invoke-Command -ComputerName $TargetIP -Credential $TargetCred -Authentication Negotiate -ScriptBlock {
+                param($sIP, $sDC)
+                $remoteTH = (Get-Item WSMan:\localhost\Client\TrustedHosts).Value
+                if ($remoteTH -notmatch $sIP -and $remoteTH -notmatch "\*") {
+                    $newRemoteTH = if ([string]::IsNullOrWhiteSpace($remoteTH)) { "$sIP,$sDC" } else { "$remoteTH,$sIP,$sDC" }
+                    Set-Item WSMan:\localhost\Client\TrustedHosts -Value $newRemoteTH -Force
+                    Write-Host "    [+] Added Source ($sIP) to Remote TrustedHosts." -ForegroundColor Green
+                } else {
+                    Write-Host "    [-] Source already in Remote TrustedHosts." -ForegroundColor Gray
+                }
+            } -ArgumentList $SourceIP, $SourceDC
+        } catch { Write-Warning "    [!] Failed to configure Remote TrustedHosts: $_" }
 
-            $ace = New-Object System.DirectoryServices.ActiveDirectoryAccessRule(
-                $identity,
-                [System.DirectoryServices.ActiveDirectoryRights]::ExtendedRight,
-                [System.Security.AccessControl.AccessControlType]::Allow
-            )
+        # ---------------------------------------------------------------------
+        # STEP 2: DNS Conditional Forwarders
+        # ---------------------------------------------------------------------
+        Write-Host "`n[2] Configuring DNS Conditional Forwarders..." -ForegroundColor Yellow
 
-            $acl.AddAccessRule($ace)
-            Set-Acl -Path "AD:$dn" -AclObject $acl
-
-            Write-Host "Granted 'Allowed to Authenticate' to $Principal on $($computer.Name)" -ForegroundColor Green
-        } catch {
-            Write-Warning "Failed to set permission on $($computer.Name): $($_.Exception.Message)"
+        if (!(Get-DnsServerZone -Name $TargetDomain -ErrorAction SilentlyContinue)) {
+            Add-DnsServerConditionalForwarderZone -Name $TargetDomain -MasterServers $TargetIP -ReplicationScope Forest
+            Write-Host "    [+] Created Local DNS Forwarder for $TargetDomain." -ForegroundColor Green
+        } else {
+            Write-Host "    [-] Local DNS Forwarder for $TargetDomain already exists." -ForegroundColor Gray
         }
+
+        try {
+            Invoke-Command -ComputerName $TargetIP -Credential $TargetCred -Authentication Negotiate -ScriptBlock {
+                param($sDomain, $sIP)
+                if (!(Get-DnsServerZone -Name $sDomain -ErrorAction SilentlyContinue)) {
+                    Add-DnsServerConditionalForwarderZone -Name $sDomain -MasterServers $sIP -ReplicationScope Forest
+                    Write-Host "    [+] Created Remote DNS Forwarder for $sDomain." -ForegroundColor Green
+                } else {
+                    Write-Host "    [-] Remote DNS Forwarder for $sDomain already exists." -ForegroundColor Gray
+                }
+            } -ArgumentList $SourceDomain, $SourceIP
+        } catch { Write-Warning "    [!] Failed to configure Remote DNS: $_" }
+
+        # ---------------------------------------------------------------------
+        # STEP 3: Create the Trust
+        # ---------------------------------------------------------------------
+        Write-Host "`n[3] Creating $Direction Trust..." -ForegroundColor Yellow
+        
+        # Determine correct netdom syntax based on direction
+        if ($Direction -eq "BiDirectional") {
+            $netdomAddCmd = "netdom trust $SourceDomain /domain:$TargetDomain /add /twoway /usero:`"$($SourceCred.UserName)`" /passwordo:`"$srcPass`" /userd:`"$($TargetCred.UserName)`" /passwordd:`"$tgtPass`""
+        } elseif ($Direction -eq "Outbound") {
+            # Source trusts Target
+            $netdomAddCmd = "netdom trust $SourceDomain /domain:$TargetDomain /add /usero:`"$($SourceCred.UserName)`" /passwordo:`"$srcPass`" /userd:`"$($TargetCred.UserName)`" /passwordd:`"$tgtPass`""
+        } else {
+            # Inbound: Target trusts Source (Reverse syntax)
+            $netdomAddCmd = "netdom trust $TargetDomain /domain:$SourceDomain /add /usero:`"$($TargetCred.UserName)`" /passwordo:`"$tgtPass`" /userd:`"$($SourceCred.UserName)`" /passwordd:`"$srcPass`""
+        }
+
+        Write-Host "    [*] Executing netdom creation command..." -ForegroundColor Gray
+        $processAdd = Start-Process -FilePath "cmd.exe" -ArgumentList "/c $netdomAddCmd" -Wait -NoNewWindow -PassThru
+        
+        if ($processAdd.ExitCode -eq 0) {
+            Write-Host "    [+] Trust created successfully (or already exists)." -ForegroundColor Green
+        } else {
+            Write-Warning "    [!] netdom returned exit code $($processAdd.ExitCode). Trust might already exist."
+        }
+
+        # ---------------------------------------------------------------------
+        # STEP 4: Configure Selective Authentication
+        # ---------------------------------------------------------------------
+        if ($SelectiveAuthentication) {
+            Write-Host "`n[4] Configuring Selective Authentication..." -ForegroundColor Yellow
+            
+            # 4A. Apply to Source DC (if BiDirectional or Outbound)
+            if ($Direction -in @("BiDirectional", "Outbound")) {
+                Write-Host "    [*] Updating Source DC ($SourceDC)..." -ForegroundColor Gray
+                $srcSelAuthCmd = "netdom trust $SourceDomain /domain:$TargetDomain /SelectiveAUTH:yes /usero:`"$($SourceCred.UserName)`" /passwordo:`"$srcPass`" /userd:`"$($TargetCred.UserName)`" /passwordd:`"$tgtPass`""
+                $procSrc = Start-Process -FilePath "cmd.exe" -ArgumentList "/c $srcSelAuthCmd" -Wait -NoNewWindow -PassThru
+                if ($procSrc.ExitCode -eq 0) { Write-Host "    [+] Selective Auth enabled on Source DC." -ForegroundColor Green }
+            }
+            
+            # 4B. Apply to Target DC (if BiDirectional or Inbound)
+            if ($Direction -in @("BiDirectional", "Inbound")) {
+                Write-Host "    [*] Updating Target DC ($TargetDC)..." -ForegroundColor Gray
+                try {
+                    Invoke-Command -ComputerName $TargetIP -Credential $TargetCred -Authentication Negotiate -ScriptBlock {
+                        param($tDom, $sDom, $tUser, $tPass, $sUser, $sPass)
+                        $tgtSelAuthCmd = "netdom trust $tDom /domain:$sDom /SelectiveAUTH:yes /usero:`"$tUser`" /passwordo:`"$tPass`" /userd:`"$sUser`" /passwordd:`"$sPass`""
+                        $procTgt = Start-Process -FilePath "cmd.exe" -ArgumentList "/c $tgtSelAuthCmd" -Wait -NoNewWindow -PassThru
+                        if ($procTgt.ExitCode -eq 0) {
+                            Write-Output "    [+] Selective Auth enabled on Target DC."
+                        } else {
+                            Write-Warning "    [!] Target DC netdom returned exit code $($procTgt.ExitCode)."
+                        }
+                    } -ArgumentList $TargetDomain, $SourceDomain, $TargetCred.UserName, $tgtPass, $SourceCred.UserName, $srcPass
+                } catch { Write-Warning "    [!] Failed to execute SelectiveAuth on Target DC: $_" }
+            }
+        } else {
+            Write-Host "`n[4] Skipping Selective Authentication (Switch not provided)..." -ForegroundColor Gray
+        }
+
+        # ---------------------------------------------------------------------
+        # STEP 5: Verification & Remediation via Invoke-Command
+        # ---------------------------------------------------------------------
+        Write-Host "`n[5] Verifying Trust & SelectAuth Status..." -ForegroundColor Yellow
+
+        # VERIFY SOURCE
+        Write-Host "    [*] Checking Source DC ($SourceDC)..." -ForegroundColor Gray
+        try {
+            $sourceCheck = Invoke-Command -ComputerName $SourceDC -ScriptBlock {
+                param($td)
+                $trust = Get-ADTrust -Filter "Name -eq '$td'" -Properties SelectiveAuthentication
+                if ($trust) {
+                    [PSCustomObject]@{
+                        Direction = $trust.Direction
+                        SelectiveAuth = $trust | Select-Object -ExpandProperty SelectiveAuthentication
+                    }
+                }
+            } -ArgumentList $TargetDomain
+
+            if ($sourceCheck) {
+                Write-Host "    [+] Trust validated on Source DC." -ForegroundColor Green
+                Write-Host "        - Direction: $($sourceCheck.Direction)" -ForegroundColor Cyan
+                Write-Host "        - Selective Auth: $($sourceCheck.SelectiveAuth)" -ForegroundColor Cyan
+                
+                # Remediation Source (Only applicable if Trusting side)
+                if ($SelectiveAuthentication -and ($Direction -in @("BiDirectional", "Outbound")) -and ($sourceCheck.SelectiveAuth -eq $false)) {
+                    Write-Host "    [!] Source DC is missing Selective Authentication. Remediating..." -ForegroundColor Yellow
+                    Invoke-Command -ComputerName $SourceDC -ScriptBlock {
+                        param($sDom, $tDom, $sUser, $sPass, $tUser, $tPass)
+                        $cmd = "netdom trust $sDom /domain:$tDom /SelectiveAUTH:yes /usero:`"$sUser`" /passwordo:`"$sPass`" /userd:`"$tUser`" /passwordd:`"$tPass`""
+                        Start-Process "cmd.exe" "/c $cmd" -Wait -NoNewWindow | Out-Null
+                    } -ArgumentList $SourceDomain, $TargetDomain, $SourceCred.UserName, $srcPass, $TargetCred.UserName, $tgtPass
+                    Write-Host "    [+] Remediation executed on Source DC." -ForegroundColor Green
+                }
+            } else { Write-Warning "    [!] Trust not found on Source DC." }
+        } catch { Write-Warning "    [!] Source check failed: $_" }
+
+
+        # VERIFY TARGET
+        Write-Host "    [*] Checking Target DC ($TargetDC)..." -ForegroundColor Gray
+        try {
+            $targetCheck = Invoke-Command -ComputerName $TargetIP -Credential $TargetCred -Authentication Negotiate -ScriptBlock {
+                param($sd)
+                $trust = Get-ADTrust -Filter "Name -eq '$sd'" -Properties SelectiveAuthentication
+                if ($trust) {
+                    [PSCustomObject]@{
+                        Direction = $trust.Direction
+                        SelectiveAuth = $trust | Select-Object -ExpandProperty SelectiveAuthentication
+                    }
+                }
+            } -ArgumentList $SourceDomain
+
+            if ($targetCheck) {
+                Write-Host "    [+] Trust validated on Target DC." -ForegroundColor Green
+                Write-Host "        - Direction: $($targetCheck.Direction)" -ForegroundColor Cyan
+                Write-Host "        - Selective Auth: $($targetCheck.SelectiveAuth)" -ForegroundColor Cyan
+                
+                # Remediation Target (Only applicable if Trusting side)
+                if ($SelectiveAuthentication -and ($Direction -in @("BiDirectional", "Inbound")) -and ($targetCheck.SelectiveAuth -eq $false)) {
+                    Write-Host "    [!] Target DC is missing Selective Authentication. Remediating..." -ForegroundColor Yellow
+                    Invoke-Command -ComputerName $TargetIP -Credential $TargetCred -Authentication Negotiate -ScriptBlock {
+                        param($tDom, $sDom, $tUser, $tPass, $sUser, $sPass)
+                        $cmd = "netdom trust $tDom /domain:$sDom /SelectiveAUTH:yes /usero:`"$tUser`" /passwordo:`"$tPass`" /userd:`"$sUser`" /passwordd:`"$sPass`""
+                        Start-Process "cmd.exe" "/c $cmd" -Wait -NoNewWindow | Out-Null
+                    } -ArgumentList $TargetDomain, $SourceDomain, $TargetCred.UserName, $tgtPass, $SourceCred.UserName, $srcPass
+                    Write-Host "    [+] Remediation executed on Target DC." -ForegroundColor Green
+                }
+            } else { Write-Warning "    [!] Trust not found on Target DC." }
+        } catch { Write-Warning "    [!] Target check failed: $_" }
+
+        Write-Host "`n=====================================================" -ForegroundColor Cyan
+        Write-Host "[*] Automated Trust Setup Completed" -ForegroundColor Cyan
+        Write-Host "=====================================================" -ForegroundColor Cyan
     }
 }
-
