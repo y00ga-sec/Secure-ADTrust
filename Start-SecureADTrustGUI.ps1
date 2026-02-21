@@ -10,7 +10,7 @@ Add-Type -AssemblyName PresentationCore
 Add-Type -AssemblyName WindowsBase
 
 # 2. Dot-source the main engine script (matching your exact filename)
-$EngineScript = Join-Path -Path $PSScriptRoot -ChildPath "Secure-ADTrust.ps1"
+$EngineScript = Join-Path -Path $PSScriptRoot -ChildPath "Secure-ADtrust.ps1"
 if (Test-Path $EngineScript) {
     . $EngineScript
 } else {
@@ -18,14 +18,15 @@ if (Test-Path $EngineScript) {
     exit
 }
 
-# 3. Define the WPF GUI in XAML
+# 3. Define the WPF GUI in XAML (Native System Theme)
 $XAML = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xml:lang="en-US"
-        Title="SecureAD Trust Configuration" Height="600" Width="480" 
+        Title="SecureAD Trust Configuration" Height="600" Width="480"
+        ThemeMode="System"
         WindowStartupLocation="CenterScreen" ResizeMode="NoResize"
-        Background="#F3F3F3" FontFamily="Segoe UI">
+        FontFamily="Segoe UI">
     <Grid Margin="15, 15, 15, 15">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -116,11 +117,11 @@ $XAML = @"
                     <ComboBoxItem Content="Outbound"/>
                 </ComboBox>
 
-                <CheckBox Name="chkSelectiveAuth" Content="Enable Selective Authentication" Grid.Row="1" Grid.ColumnSpan="2" Margin="0, 5, 0, 5" FontWeight="Bold" Foreground="#005A9E"/>
+                <CheckBox Name="chkSelectiveAuth" Content="Enable Selective Authentication" Grid.Row="1" Grid.ColumnSpan="2" Margin="0, 5, 0, 5" FontWeight="Bold"/>
             </Grid>
         </GroupBox>
 
-        <Button Name="btnExecute" Content="Create Trust" Grid.Row="3" Height="40" Background="#0078D7" Foreground="White" FontWeight="Bold" FontSize="14" Cursor="Hand" BorderThickness="0"/>
+        <Button Name="btnExecute" Content="Create Trust" Grid.Row="3" Height="35" FontWeight="Bold" FontSize="14" Cursor="Hand" Margin="0,5,0,0"/>
     </Grid>
 </Window>
 "@
