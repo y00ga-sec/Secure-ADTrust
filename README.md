@@ -1,6 +1,6 @@
 # SecureAD-Trust
 
-A robust PowerShell automation script (`SecureAD-Trust.ps1`) designed to seamlessly establish and configure Active Directory Trusts (BiDirectional, Inbound, or Outbound) between two distinct domains. 
+A PowerShell automation script (`SecureAD-Trust.ps1`) designed to seamlessly establish and configure Active Directory Trusts (BiDirectional, Inbound, or Outbound) between two distinct domains. You can check [my article about securing AD trusts](https://blog.y00ga.lol/PERSO/PUBLISH/Article+perso/(Don't)+Trust+me+PART+II%2C+a+little+study+on+securing+Active+Directory+Trusts)
 
 This script acts as a powerful wrapper around the legacy `netdom.exe` utility, bypassing common PowerShell parsing errors by executing raw commands securely. It fully automates the prerequisites, the trust creation, the application of Selective Authentication, and performs end-to-end verification.
 
