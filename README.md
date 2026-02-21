@@ -1,57 +1,89 @@
-# Secure-ADTrust
-Deploy Automatically Secure Active Directory Trust Relationships
----------
+# SecureAD-Trust
 
-If you are interested in setting up Selective Authentication in your environment, please check [this blog post](https://publish.obsidian.md/yooga-sec/PERSO/PUBLISH/Article+perso/(Don't)+Trust+me+PART+II%2C+a+little+study+on+securing+Active+Directory+Trusts) I wrote first 😉 it summarizes prerequisites and walk through every steps of deploying an AD trust with Selective Authentication
+A robust PowerShell automation script (`SecureAD-Trust.ps1`) designed to seamlessly establish and configure Active Directory Trusts (BiDirectional, Inbound, or Outbound) between two distinct domains. 
 
-This script offers two main functions that will help you :
+This script acts as a powerful wrapper around the legacy `netdom.exe` utility, bypassing common PowerShell parsing errors by executing raw commands securely. It fully automates the prerequisites, the trust creation, the application of Selective Authentication, and performs end-to-end verification.
 
-- Deploy **Outbound External Trusts** with Selective Authentication
-- Configure the **Allowed to authenticate** permissions to the right trusted objects in the trusting domain
 
-## Set-ADTrust
 
-This function will :
+## ✨ Features
 
-- Add a conditional forwarder on the current DC to the remote DC
-- Add a conditional forwarder on the remote DC to the current DC
-- Create an external outbound trust
-- Set the trust to use Selective Authentication
+* **Directional Control:** Choose between `BiDirectional` (default), `Inbound` (Target trusts Source), or `Outbound` (Source trusts Target) relationships.
+* **Automated DNS Configuration:** Automatically creates DNS Conditional Forwarders on both the Source and Target Domain Controllers.
+* **WinRM Readiness:** Dynamically adds the respective Domain Controllers to each other's WinRM `TrustedHosts` list to allow cross-domain remote management.
+* **Bulletproof Execution:** Uses `cmd.exe /c` to strictly control argument quoting, preventing PowerShell from breaking complex `netdom` credential strings.
+* **Smart Selective Authentication:** Can optionally enforce Selective Authentication. The script intelligently applies it only to the *Trusting* domain(s) based on the chosen direction.
+* **Self-Healing Verification:** Validates the trust direction and Selective Authentication status on both DCs using `Get-ADTrust`. If requested but missing, it automatically triggers a remediation sequence.
 
-You only need to provide the following parameters :
+## 📋 Prerequisites
 
-- FQDN of the remote DC
-- IP address of the remote DC
-- Admin account of for remote domain (i.e. DOMAIN\Administrator)
-- FQDN of the trusted domain (remote forest root domain)
+Before running this script, ensure the following requirements are met:
+1.  **Network Connectivity:** The Source and Target DCs must be able to route to each other over standard AD ports (DNS: 53, Kerberos: 88, LDAP: 389/636, SMB: 445, RPC, WinRM: 5985/5986).
+2.  **Credentials:** You must have valid **Domain Admin** credentials for *both* the Source and Target domains.
+3.  **Active Directory Module:** The RSAT Active Directory module must be available (specifically for the `Get-ADTrust` cmdlet).
+4.  **Execution Policy:** Ensure your execution policy allows running custom scripts (`Set-ExecutionPolicy RemoteSigned -Scope CurrentUser`).
 
-### Example usage :
-````
-Set-ADTrust -FQDN DC01.trusteddomain.local -IP 192.168.1.50 -Admin 'TRUSTED\DomainAdmin' -TrustedDomain trusteddomain.local
-````
+## 🚀 Usage & All Use Cases
 
-**Make sur the required ports are opened betweens both Domain Controllers and that both domains can resolve each other !**
+First, dot-source the script to load the `Set-ADtrust` function into your current PowerShell session:
 
-https://github.com/user-attachments/assets/40d73d4d-9ec9-4c70-a79f-d3217947e1ce
+```powershell
+. .\SecureAD-Trust.ps1
+```
 
-## Grant-AllowedToAuthenticate
+🔹 Preparation: Gather Credentials
+For all the use cases below, retrieve administrative credentials for both domains into variables:
 
-This function grants the "Allowed to Authenticate" permission to a trusted domain security principal on specific computer objects in the trusting domain.
+```powershell
+$SourceCred = Get-Credential -UserName "administrator@source.local" -Message "Source Domain Admin"
+$TargetCred = Get-Credential -UserName "administrator@target.local" -Message "Target Domain Admin"
+```
 
-You only need to provide the following parameters :
 
-- One or more computer names (sAMAccountName or DNS names) in the current domain
-- The user or group from the trusted domain (e.g., "TRUSTEDDOM\User" or "TRUSTEDDOM\Domain Users") to be granted permission
+- Use Case 1: BiDirectional Trust (Standard / Forest-Wide Auth)
+Scenario: Both domains trust each other equally. Users from either domain can access resources in the other domain (subject to standard ACLs).
 
-### Example usage :
-````
-Grant-AllowedToAuthenticate -ComputerName "SRV01","SRV02" -Principal "TRUSTEDDOM\Allowed_Auth_SRV01"
-````
+```powershell
+Set-ADtrust -SourceDC "DC01.source.local" `
+            -SourceDomain "source.local" `
+            -SourceCred $SourceCred `
+            -TargetDC "DC01.target.local" `
+            -TargetDomain "target.local" `
+            -TargetCred $TargetCred `
+            -Direction BiDirectional
+(Note: BiDirectional is the default behavior if the -Direction parameter is omitted).
+```
 
-https://github.com/user-attachments/assets/861ffe9c-d2ca-4755-b6d4-42555122c4fe
+- Use Case 2 : Outbound Trust (One-Way)
+Scenario: The Source domain trusts the Target domain.
 
--------------
-## Greetings :
+Result: Users in the Target domain can access resources in the Source domain. Users in the Source domain cannot access resources in the Target domain.
 
-- lewill03 with [ADTrust.psm1](https://github.com/lewill03/ADTrust/blob/main/ADTrust.psm1)
+```powershell
+Set-ADtrust -SourceDC "DC01.source.local" `
+            -SourceDomain "source.local" `
+            -SourceCred $SourceCred `
+            -TargetDC "DC01.target.local" `
+            -TargetDomain "target.local" `
+            -TargetCred $TargetCred `
+            -Direction Outbound
 
+```
+
+- Use Case 3: Inbound Trust (One-Way)
+Scenario: The Target domain trusts the Source domain.
+
+Result: Users in the Source domain can access resources in the Target domain. Users in the Target domain cannot access resources in the Source domain.
+
+```powershell
+Set-ADtrust -SourceDC "DC01.source.local" `
+            -SourceDomain "source.local" `
+            -SourceCred $SourceCred `
+            -TargetDC "DC01.target.local" `
+            -TargetDomain "target.local" `
+            -TargetCred $TargetCred `
+            -Direction Inbound
+
+```
+
+The `-SelectiveAuthentication` parameter will set up the selected type of trust with Selective Auth, which will need to be manually completed by giving the `Allowed to authenticate` ACE on the required objects, to the principals in the other domain you want to give access
